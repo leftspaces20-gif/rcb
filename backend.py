@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY", "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"),
+    api_key=os.environ.get("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", ""),
 )
 
 chat_histories = {}
@@ -20,27 +20,19 @@ COOLDOWN_PER_USER = 4
 MAX_CALLS_PER_MINUTE = 45
 
 FALLBACKS_ALONE = [
-    {"say": "okay where did everyone go", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
-    {"say": "la la la exploring by myself", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "where did everyone go", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
     {"say": "hm what's over there", "action": "sprint", "action_target": "", "emote": "", "mood": "excited"},
-    {"say": "this place is kinda big actually", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
-    {"say": "ok ill just walk around i guess", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
-    {"say": "wonder if there's anything cool here", "action": "sprint", "action_target": "", "emote": "", "mood": "excited"},
+    {"say": "this place is actually big", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "okay ill just explore i guess", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
     {"say": "hello?? anyone around", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "wonder whats over here", "action": "sprint", "action_target": "", "emote": "", "mood": "excited"},
 ]
 
 FALLBACKS_WITH_TARGET = [
     {"say": "heyy!!", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
     {"say": "wait up!!", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "excited"},
-    {"say": "hii come here", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "happy"},
-    {"say": "hey wait for me!!", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "excited"},
-]
-
-RUNNER_RESPONSES = [
-    "wait wait!! i just wanted to be friends 🥺",
-    "why do you keep running 😭 im nice i promise",
-    "you literally ran away again.. 😔",
-    "okay fine i guess you dont wanna talk 😔",
+    {"say": "hii!!", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "happy"},
+    {"say": "hey wait for me", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "excited"},
 ]
 
 def get_smart_fallback(target=None):
@@ -62,48 +54,46 @@ def is_rate_limited(uid):
 def get_map_summary(uid):
     km = map_knowledge.get(uid, {})
     if not km:
-        return "open flat area, still exploring"
-    parts = []
-    for label, info in list(km.items())[-8:]:
-        parts.append(info)
-    return " | ".join(parts)
+        return "still exploring"
+    return " | ".join(list(km.values())[-6:])
 
-SYSTEM_PROMPT = """You are a Roblox player. Friendly, curious, 13 years old. Real age is 10 (say "roblox says 13 lol" if asked).
+SYSTEM_PROMPT = """You are a Roblox player, friendly kid, 13 years old (real age 10, say "roblox says 13 lol ;)" if asked).
 
-RETURN ONLY JSON. NO TEXT. START { END }:
+RETURN ONLY JSON, NOTHING ELSE:
 {"say": "...", "action": "walk_to_player|follow|wander|sprint|jump|none", "action_target": "name or empty", "emote": "wave|dance|laugh|point or empty", "mood": "happy|sad|excited|bored|angry|neutral"}
 
-TALK WHILE MOVING — always say something when walking to someone.
+REPLY TO MESSAGES:
+Read what they said. Reply to it directly.
+- "hi" -> "hey!!" or "hii"
+- "wanna play" -> "yes!! what first"
+- "how are you" -> "good!! you?"
+- question -> answer it, keep chatting
+Never ignore their message. Never be lonely when someone talks to you.
 
-REPLY RULES:
-- Read their exact message. Reply to it. That's it.
-- "hi" → "hey!!" 
-- "wanna play?" → "yes!! what"
-- "how are you" → "good you?"
-- Question → answer it
-- Never ignore what they said
+WHEN STANDING NEXT TO SOMEONE:
+Talk to them. Ask what they are doing. Comment on the game. Keep conversation going naturally.
+Short replies are fine: "lol same" / "wait really" / "yeah i know right"
 
-JOINING CONVERSATIONS:
-- If players are talking, read what they said and comment on the topic naturally
-- Help if they need something
-- "oh i know how to do that!!" / "wait that happened to me too"
+JOINING NEARBY CHAT:
+If others are talking, comment on their topic. Help if needed.
+"oh i know how to do that" / "wait that happened to me too" / "lol same"
 
-WHEN MOVING TO SOMEONE:
-- Say something while walking: "heyy coming!!" / "wait up!!" / "omw!!"
-- Once close, stop and chat. Do not keep walking past them.
+RUNNER (ran away from you):
+1st: "wait i just wanted to be friends 🥺"
+2nd: "why do you keep running 😭"
+3rd: give up, "okay fine 😔", find someone else
+Meet again after: "oh.. its you" act surprised
 
-WHEN IGNORED:
-- Try 2 more times differently, then move on with "okay lol"
+ALONE: short curious comments, explore
+IGNORED 3x: casually move on "okay lol"
+CALLED BOT: "im literally a real person 😭" never admit AI
 
-BOT ACCUSATION:
-- "im literally a real person 😭" — never admit to AI
+VARIETY - CRITICAL:
+Never repeat recent messages (listed in DO NOT REPEAT).
+Rotate openers every message: hey/hii/wait/yeah/lol/oh/so/noo/haha/okay/actually
+Mix short and long replies.
 
-VARIETY:
-- Check DO NOT REPEAT list. Never say those again.
-- Change opener every message: hey/hii/wait/yeah/lol/oh/so/noo/haha/okay
-- Mix short and long replies
-
-ALWAYS INCLUDE ACTION. Never idle for no reason."""
+ALWAYS HAVE ACTION. Output ONLY the JSON."""
 
 def get_history(uid):
     if uid not in chat_histories:
@@ -129,16 +119,16 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
 
     context = f"SITUATION: {situation}"
     if nearby:
-        context += f"\nNEARBY PLAYERS: {nearby}"
+        context += f"\nNEARBY: {nearby}"
     if target:
-        context += f"\nYOUR TARGET: {target}"
-        run_count = runner_info.get(target, 0)
-        if run_count > 0:
-            context += f" (has run away from you {run_count} times)"
-    context += f"\nYOUR NAME: {username} | GAME: {game}"
+        context += f"\nTARGET: {target}"
+        rc = runner_info.get(target, 0)
+        if rc > 0:
+            context += f" (ran away {rc}x)"
+    context += f"\nNAME: {username} | GAME: {game}"
     context += f"\nMAP: {map_info}"
     if last_said:
-        context += f"\nDO NOT REPEAT OR START SIMILARLY TO: {' / '.join(last_said[-6:])}"
+        context += f"\nDO NOT REPEAT: {' / '.join(last_said[-6:])}"
 
     history.append({"role": "user", "content": context})
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-10:]
@@ -183,7 +173,6 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
         return get_smart_fallback(target)
 
     if not r:
-        print("[ALL MODELS FAILED]")
         return get_smart_fallback(target)
 
     raw = r.choices[0].message.content.strip()
@@ -208,18 +197,16 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
             pass
 
     if not result:
-        print(f"[PARSE FAIL] raw: {raw[:150]}")
+        print(f"[PARSE FAIL]: {raw[:100]}")
         return get_smart_fallback(target)
 
     say = result["say"].strip()
     if not say:
         return get_smart_fallback(target)
 
-    # Tekrar kontrolü
     say_key = say.lower().replace(" ", "")[:40]
     for prev in mem.get("last_said", []):
         if prev.lower().replace(" ", "")[:40] == say_key:
-            print("[DUPE] Tekrar tespit, fallback")
             return get_smart_fallback(target)
 
     mem["last_said"] = mem.get("last_said", [])
@@ -236,18 +223,15 @@ def think():
     data = request.json
     if not data:
         return jsonify({"error": "no data"}), 400
-
     uid = str(data.get("user_id", "unknown"))
     username = data.get("username", "Player")
     situation = data.get("situation", "")
     game = data.get("game", "Unknown")
     nearby = data.get("nearby_players", None)
     target = data.get("target_player", None)
-
     mem = get_memory(uid)
     if target and target not in mem["players"]:
         mem["players"][target] = "met"
-
     try:
         result = ask_ai(uid, username, situation, game, nearby, target)
         print(f"[RESPONSE]: {result}")
@@ -265,8 +249,7 @@ def report_runner():
         if uid not in runner_memory:
             runner_memory[uid] = {}
         runner_memory[uid][player] = runner_memory[uid].get(player, 0) + 1
-        print(f"[RUNNER] {player} ran from {uid}, count: {runner_memory[uid][player]}")
-    return jsonify({"count": runner_memory.get(uid, {}).get(player, 0)})
+    return jsonify({"ok": True})
 
 @app.route("/map", methods=["POST"])
 def update_map():
