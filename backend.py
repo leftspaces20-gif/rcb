@@ -4,7 +4,7 @@ import os
 
 app = Flask(__name__)
 
-GROQ_API_KEY = os.environ.get("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", "BURAYA_GROQ_API_KEYIN")
+GROQ_API_KEY = "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"  # gsk_... key'ini buraya yaz
 groq_client = Groq(api_key=GROQ_API_KEY)
 chat_histories = {}
 
