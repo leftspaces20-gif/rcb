@@ -5,7 +5,7 @@ import json
 app = Flask(__name__)
 
 # ===================== AYARLAR =====================
-GROQ_API_KEY = "BURAYA_GROQ_API_KEYIN"  # https://console.groq.com
+GROQ_API_KEY = "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"  # https://console.groq.com
 # ===================================================
 
 groq_client = Groq(api_key=GROQ_API_KEY)
