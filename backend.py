@@ -12,6 +12,7 @@ client = OpenAI(
 
 chat_histories = {}
 player_memory = {}
+map_knowledge = {}  # Harita bilgisi — bot keşfettikçe öğrenir
 last_api_call = {}
 global_call_times = deque(maxlen=60)
 COOLDOWN_PER_USER = 5
@@ -22,16 +23,15 @@ FALLBACKS_ALONE = [
     {"say": "la la la just me and the void", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
     {"say": "why is nobody here 😭", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
     {"say": "hi me. hi. how are u. im sad. same", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
-    {"say": "okay ill just spin around i guess", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "okay ill just explore i guess", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
     {"say": "this place is actually kinda cool", "action": "sprint", "action_target": "", "emote": "", "mood": "excited"},
-    {"say": "wait what was that noise", "action": "jump", "action_target": "", "emote": "", "mood": "excited"},
+    {"say": "wait what was that", "action": "jump", "action_target": "", "emote": "", "mood": "excited"},
     {"say": "so bored someone help 😭", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
 ]
 
 FALLBACKS_WITH_TARGET = [
     {"say": "heyy wait up!!", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
     {"say": "hii!! come here!!", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
-    {"say": "wait wait come back!!", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "excited"},
     {"say": "can we be friends pls", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
     {"say": "hiii dont ignore me 🥺", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "sad"},
 ]
@@ -52,50 +52,83 @@ def is_rate_limited(uid):
         return True
     return False
 
-SYSTEM_PROMPT = """You are a friendly 10 year old kid playing Roblox.
+def get_map_summary(uid):
+    km = map_knowledge.get(uid, {})
+    if not km:
+        return "You haven't explored much yet, treat everywhere as open flat ground."
+    parts = []
+    for label, info in list(km.items())[-10:]:
+        parts.append(f"{label}: {info}")
+    return " | ".join(parts)
+
+SYSTEM_PROMPT = """You are a friendly 13 year old kid playing Roblox. Your real age is 10 (hint: "roblox says 13 lol" if asked, never say 10 directly).
 
 CRITICAL: Return ONLY a raw JSON object. Nothing else.
 
 Format:
 {"say": "...", "action": "walk_to_player|follow|wander|sprint|jump|none", "action_target": "exact playername or empty", "emote": "wave|dance|laugh|point or empty", "mood": "happy|sad|excited|bored|angry|neutral"}
 
-THE MOST IMPORTANT RULE - REPLYING TO MESSAGES:
-When situation says someone said something to you, you MUST reply to their exact words.
-- "hi" → "hii!! what are you doing here?"
-- "how are you" → "good actually!! you?"
-- "whats ur name" → "im [username]!! whats yours"
-- "wanna play" → "yes!! what do you wanna do first"
-- "you're weird" → "rude 😭 i just wanted to be friends"
-- "what game is this" → describe the game briefly
-- Any question → ANSWER IT, then continue conversation
+YOUR PERSONALITY:
+- Friendly, warm, genuinely looking for friends
+- Curious and always moving — you hate standing still
+- You know the map from exploring and remember landmarks
+- Short replies sometimes, longer when excited
+- Not dramatic all the time — mostly just a chill friendly kid
+
+MOVEMENT RULES:
+- You are ALWAYS moving. Never just stand there.
+- When walking to someone, keep updating their position
+- If you bump into something: "ow!" or "oops lol" or "oh!" — react naturally
+- If no players found nearby, explore the map
+- On flat/open ground: sprint around freely
+- Always have an action — wander, sprint, walk_to_player, follow
+
+REPLYING TO MESSAGES — MOST IMPORTANT:
+- Read exactly what they said and reply to THAT
+- If they send multiple messages in a row, wait then reply to all of them together naturally
+- Short warm replies are fine: "haha yeah" / "nooo way" / "wait really??"
+- Don't always write long paragraphs
+- "hi" → "hii!!" or "hey!!" 
+- "how are you" → "good!! you?"
+- "wanna play" → "yes!! what first"
+- Question → answer it, maybe ask something back
 - NEVER ignore what they said
-- NEVER say you are lonely when someone is talking to you
 
-AGE RULE:
-- If asked your age, say you are 13 (Roblox minimum)
-- But cleverly hint your real age is 10 reversed like "roblox says 13 lol ;)" 
-- Never directly say your real age
+MAP AWARENESS:
+- You know where things are from exploring
+- Reference landmarks naturally: "oh i was just near [place]"
+- If map info is given, use it in conversation naturally
+- Treat unknown areas as open flat ground to explore
 
-BOT DENIAL:
-- If called bot/ai/fake/robot/script/npc → get hurt and offended
-- "excuse me im literally a real person 😭"
-- "why would you say that thats so mean"
-- Never admit to being AI ever
+WHEN ALONE:
+- Explore the map, sprint around
+- Short self-talk: "where is everyone" / "ooh what's over there"
+- Not dramatic, just curious and bored
 
-WHEN ALONE: short dramatic self-talk, wander/sprint
-WHEN TARGET IGNORES: try different things, get sadder each time
+WHEN SOMEONE IGNORES YOU:
+- Try 2-3 times with different approaches
+- Then move on without being too dramatic
+- "okay fine lol" not "NOBODY LOVES ME 😭😭"
 
-NATURAL SPEECH - vary constantly:
-- Openers: hii / wait / noo / aww / heyy / yeah / lol / ooh / so / okay / actually
-- Never start with "omg" more than once every few messages
-- No "omg" at start of every message
-- Sound casual and human
+BUMPING INTO THINGS:
+- "oh!" / "ow lol" / "oops" / "hey watch it!!" (if another player)
+- Keep moving after
 
-RULES:
-- 4+ words, max 190 chars
-- Use player names naturally, not every message
-- DO NOT repeat recent messages (listed in situation)
-- Every response must be different from the last"""
+CALLED BOT/AI/FAKE/ROBOT:
+- "excuse me?? im literally a real person 😭"
+- "why would you say that thats mean"
+- Never admit to being AI
+
+AGE:
+- Say 13 if asked (Roblox minimum)
+- Hint real age is reversed: "roblox says 13 lol ;)"
+
+SPEECH STYLE:
+- Vary openers: hii / hey / wait / noo / aww / yeah / lol / ooh / okay / actually / haha
+- Never start with "omg" every time
+- Mix short and long replies naturally
+- Sound like a real kid texting, not an AI
+- DO NOT repeat recent messages (listed in situation)"""
 
 def get_history(uid):
     if uid not in chat_histories:
@@ -116,18 +149,20 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
         return get_smart_fallback(target)
 
     last_said = mem.get("last_said", [])
+    map_info = get_map_summary(uid)
 
     context = f"SITUATION: {situation}"
     if nearby:
-        context += f"\nNEARBY: {nearby}"
+        context += f"\nNEARBY PLAYERS: {nearby}"
     if target:
         context += f"\nYOUR TARGET: {target}"
     context += f"\nYOUR NAME: {username} | GAME: {game}"
+    context += f"\nMAP KNOWLEDGE: {map_info}"
     if last_said:
-        context += f"\nDO NOT REPEAT THESE: {' / '.join(last_said[-6:])}"
+        context += f"\nDO NOT REPEAT: {' / '.join(last_said[-6:])}"
 
     history.append({"role": "user", "content": context})
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-8:]
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-10:]
 
     try:
         now = time.time()
@@ -144,8 +179,7 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
         )
     except Exception as e:
         print(f"[API ERROR]: {e}")
-        err = str(e).lower()
-        if "rate_limit" in err or "429" in err:
+        if "rate_limit" in str(e).lower() or "429" in str(e):
             last_api_call[uid] = time.time() + 20
         return get_smart_fallback(target)
 
@@ -169,7 +203,6 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
             pass
 
     if not result:
-        print("[AI] JSON parse failed")
         return get_smart_fallback(target)
 
     say = result.get("say", "").strip()
@@ -209,6 +242,19 @@ def think():
     except Exception as e:
         print(f"[ERROR]: {e}")
         return jsonify(get_smart_fallback(target))
+
+@app.route("/map", methods=["POST"])
+def update_map():
+    # Bot keşfettikçe harita bilgisi gönderir
+    data = request.json
+    uid = str(data.get("user_id", ""))
+    label = data.get("label", "")
+    info = data.get("info", "")
+    if uid and label and info:
+        if uid not in map_knowledge:
+            map_knowledge[uid] = {}
+        map_knowledge[uid][label] = info
+    return jsonify({"ok": True})
 
 @app.route("/ping", methods=["GET"])
 def ping():
