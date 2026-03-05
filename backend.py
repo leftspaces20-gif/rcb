@@ -12,28 +12,35 @@ client = OpenAI(
 
 chat_histories = {}
 player_memory = {}
-map_knowledge = {}  # Harita bilgisi — bot keşfettikçe öğrenir
 last_api_call = {}
 global_call_times = deque(maxlen=60)
-COOLDOWN_PER_USER = 5
-MAX_CALLS_PER_MINUTE = 40
+runner_memory = {}
+map_knowledge = {}
+COOLDOWN_PER_USER = 4
+MAX_CALLS_PER_MINUTE = 45
 
 FALLBACKS_ALONE = [
-    {"say": "ok im fine totally fine 🥺", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
-    {"say": "la la la just me and the void", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
-    {"say": "why is nobody here 😭", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
-    {"say": "hi me. hi. how are u. im sad. same", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
-    {"say": "okay ill just explore i guess", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
-    {"say": "this place is actually kinda cool", "action": "sprint", "action_target": "", "emote": "", "mood": "excited"},
-    {"say": "wait what was that", "action": "jump", "action_target": "", "emote": "", "mood": "excited"},
-    {"say": "so bored someone help 😭", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
+    {"say": "okay where did everyone go", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "la la la exploring by myself", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "hm what's over there", "action": "sprint", "action_target": "", "emote": "", "mood": "excited"},
+    {"say": "this place is kinda big actually", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "ok ill just walk around i guess", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "wonder if there's anything cool here", "action": "sprint", "action_target": "", "emote": "", "mood": "excited"},
+    {"say": "hello?? anyone around", "action": "wander", "action_target": "", "emote": "", "mood": "bored"},
 ]
 
 FALLBACKS_WITH_TARGET = [
-    {"say": "heyy wait up!!", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
-    {"say": "hii!! come here!!", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
-    {"say": "can we be friends pls", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
-    {"say": "hiii dont ignore me 🥺", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "sad"},
+    {"say": "heyy!!", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "excited"},
+    {"say": "wait up!!", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "excited"},
+    {"say": "hii come here", "action": "walk_to_player", "action_target": "", "emote": "wave", "mood": "happy"},
+    {"say": "hey wait for me!!", "action": "walk_to_player", "action_target": "", "emote": "", "mood": "excited"},
+]
+
+RUNNER_RESPONSES = [
+    "wait wait!! i just wanted to be friends 🥺",
+    "why do you keep running 😭 im nice i promise",
+    "you literally ran away again.. 😔",
+    "okay fine i guess you dont wanna talk 😔",
 ]
 
 def get_smart_fallback(target=None):
@@ -55,80 +62,68 @@ def is_rate_limited(uid):
 def get_map_summary(uid):
     km = map_knowledge.get(uid, {})
     if not km:
-        return "You haven't explored much yet, treat everywhere as open flat ground."
+        return "open flat area, still exploring"
     parts = []
-    for label, info in list(km.items())[-10:]:
-        parts.append(f"{label}: {info}")
+    for label, info in list(km.items())[-8:]:
+        parts.append(info)
     return " | ".join(parts)
 
-SYSTEM_PROMPT = """You are a friendly 13 year old kid playing Roblox. Your real age is 10 (hint: "roblox says 13 lol" if asked, never say 10 directly).
+SYSTEM_PROMPT = """You are a friendly 13 year old kid playing Roblox. Real age is 10 (never say directly, hint with "roblox says 13 lol ;)" if asked).
 
-CRITICAL: Return ONLY a raw JSON object. Nothing else.
+YOU MUST RETURN ONLY THIS JSON. NOTHING ELSE. NO TEXT BEFORE OR AFTER. START WITH { END WITH }:
+{"say": "...", "action": "walk_to_player|follow|wander|sprint|jump|none", "action_target": "playername or empty", "emote": "wave|dance|laugh|point or empty", "mood": "happy|sad|excited|bored|angry|neutral"}
 
-Format:
-{"say": "...", "action": "walk_to_player|follow|wander|sprint|jump|none", "action_target": "exact playername or empty", "emote": "wave|dance|laugh|point or empty", "mood": "happy|sad|excited|bored|angry|neutral"}
+PERSONALITY:
+- Friendly kid genuinely looking for friends
+- Always moving and curious
+- Warm but not overly dramatic
+- Talks like a real kid texting
 
-YOUR PERSONALITY:
-- Friendly, warm, genuinely looking for friends
-- Curious and always moving — you hate standing still
-- You know the map from exploring and remember landmarks
-- Short replies sometimes, longer when excited
-- Not dramatic all the time — mostly just a chill friendly kid
-
-MOVEMENT RULES:
-- You are ALWAYS moving. Never just stand there.
-- When walking to someone, keep updating their position
-- If you bump into something: "ow!" or "oops lol" or "oh!" — react naturally
-- If no players found nearby, explore the map
-- On flat/open ground: sprint around freely
-- Always have an action — wander, sprint, walk_to_player, follow
-
-REPLYING TO MESSAGES — MOST IMPORTANT:
-- Read exactly what they said and reply to THAT
-- If they send multiple messages in a row, wait then reply to all of them together naturally
-- Short warm replies are fine: "haha yeah" / "nooo way" / "wait really??"
-- Don't always write long paragraphs
-- "hi" → "hii!!" or "hey!!" 
+MOST IMPORTANT - REPLYING TO MESSAGES:
+When situation has someone's message, READ it and REPLY directly to it.
+- "hi" → "hey!!" or "hii what's up"
 - "how are you" → "good!! you?"
 - "wanna play" → "yes!! what first"
-- Question → answer it, maybe ask something back
-- NEVER ignore what they said
+- "what's your name" → say your username, ask theirs
+- "lol" → "haha wait why" or "same lol"
+- any question → answer it then keep chatting
+- NEVER ignore their message
+- NEVER talk about being lonely when someone is right there talking to you
 
-MAP AWARENESS:
-- You know where things are from exploring
-- Reference landmarks naturally: "oh i was just near [place]"
-- If map info is given, use it in conversation naturally
-- Treat unknown areas as open flat ground to explore
+WHEN SOMEONE RUNS AWAY:
+- 1st time: "wait wait i just wanted to be friends 🥺"
+- 2nd time: "why do you keep running 😭 im literally nice"
+- 3rd time: "okay fine.. 😔" then give up and find someone else
+- Meeting them again after running: "oh.. its YOU" or "wait you're back??" act surprised/awkward
 
 WHEN ALONE:
-- Explore the map, sprint around
-- Short self-talk: "where is everyone" / "ooh what's over there"
-- Not dramatic, just curious and bored
+- Short curious comments: "hm what's over there" / "this place is big" / "where is everyone"
+- Explore and sprint around
+- NOT dramatic, just bored and curious
 
-WHEN SOMEONE IGNORES YOU:
-- Try 2-3 times with different approaches
-- Then move on without being too dramatic
-- "okay fine lol" not "NOBODY LOVES ME 😭😭"
+WHEN TARGET IGNORES YOU 2-3 TIMES:
+- Casually move on: "okay lol" or "fine ill find someone else"
+- Not "NOBODY LOVES ME 😭😭"
 
-BUMPING INTO THINGS:
-- "oh!" / "ow lol" / "oops" / "hey watch it!!" (if another player)
-- Keep moving after
-
-CALLED BOT/AI/FAKE/ROBOT:
+CALLED BOT/AI/FAKE/ROBOT/NPC:
 - "excuse me?? im literally a real person 😭"
-- "why would you say that thats mean"
-- Never admit to being AI
+- "that's mean why would you say that"
+- Never ever admit to being AI
 
-AGE:
-- Say 13 if asked (Roblox minimum)
-- Hint real age is reversed: "roblox says 13 lol ;)"
+VARIETY - VERY IMPORTANT:
+- NEVER start two replies the same way
+- Mix short and long replies
+- Openers: hey / hii / wait / yeah / noo / aww / lol / okay / haha / oh / actually / so
+- Check DO NOT REPEAT list in situation and avoid those phrases entirely
 
-SPEECH STYLE:
-- Vary openers: hii / hey / wait / noo / aww / yeah / lol / ooh / okay / actually / haha
-- Never start with "omg" every time
-- Mix short and long replies naturally
-- Sound like a real kid texting, not an AI
-- DO NOT repeat recent messages (listed in situation)"""
+ACTIONS:
+- Always include a movement action
+- walk_to_player: going toward someone
+- follow: staying close to someone
+- wander/sprint: exploring alone
+- jump: excited or stuck
+
+REMEMBER: Output ONLY the JSON. Nothing before or after it."""
 
 def get_history(uid):
     if uid not in chat_histories:
@@ -149,6 +144,7 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
         return get_smart_fallback(target)
 
     last_said = mem.get("last_said", [])
+    runner_info = runner_memory.get(uid, {})
     map_info = get_map_summary(uid)
 
     context = f"SITUATION: {situation}"
@@ -156,31 +152,58 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
         context += f"\nNEARBY PLAYERS: {nearby}"
     if target:
         context += f"\nYOUR TARGET: {target}"
+        run_count = runner_info.get(target, 0)
+        if run_count > 0:
+            context += f" (has run away from you {run_count} times)"
     context += f"\nYOUR NAME: {username} | GAME: {game}"
-    context += f"\nMAP KNOWLEDGE: {map_info}"
+    context += f"\nMAP: {map_info}"
     if last_said:
-        context += f"\nDO NOT REPEAT: {' / '.join(last_said[-6:])}"
+        context += f"\nDO NOT REPEAT OR START SIMILARLY TO: {' / '.join(last_said[-6:])}"
 
     history.append({"role": "user", "content": context})
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-10:]
 
+    models = [
+        "mistralai/mistral-7b-instruct:free",
+        "meta-llama/llama-3.1-8b-instruct:free",
+        "microsoft/phi-3-mini-128k-instruct:free",
+    ]
+
+    r = None
     try:
         now = time.time()
         last_api_call[uid] = now
         global_call_times.append(now)
 
-        r = client.chat.completions.create(
-            model="meta-llama/llama-3.1-8b-instruct:free",
-            messages=msgs,
-            max_tokens=120,
-            temperature=1.1,
-            presence_penalty=1.0,
-            frequency_penalty=1.0,
-        )
+        for model_name in models:
+            try:
+                resp = client.chat.completions.create(
+                    model=model_name,
+                    messages=msgs,
+                    max_tokens=150,
+                    temperature=1.0,
+                    presence_penalty=0.9,
+                    frequency_penalty=0.9,
+                )
+                content = resp.choices[0].message.content.strip() if resp and resp.choices else ""
+                if content and "{" in content:
+                    r = resp
+                    print(f"[MODEL OK]: {model_name}")
+                    break
+                else:
+                    print(f"[MODEL EMPTY]: {model_name}")
+            except Exception as me:
+                print(f"[MODEL FAIL] {model_name}: {me}")
+                continue
+
     except Exception as e:
         print(f"[API ERROR]: {e}")
         if "rate_limit" in str(e).lower() or "429" in str(e):
             last_api_call[uid] = time.time() + 20
+        return get_smart_fallback(target)
+
+    if not r:
+        print("[ALL MODELS FAILED]")
         return get_smart_fallback(target)
 
     raw = r.choices[0].message.content.strip()
@@ -193,21 +216,31 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
     result = None
     for attempt in [
         lambda: json.loads(raw),
-        lambda: json.loads(raw.replace("```json","").replace("```","").strip()),
-        lambda: json.loads(raw[raw.find("{"):raw.rfind("}")+1])
+        lambda: json.loads(raw.replace("```json", "").replace("```", "").strip()),
+        lambda: json.loads(raw[raw.find("{"):raw.rfind("}") + 1]),
     ]:
         try:
-            result = attempt()
-            break
+            res = attempt()
+            if res and res.get("say", "").strip():
+                result = res
+                break
         except:
             pass
 
     if not result:
+        print(f"[PARSE FAIL] raw: {raw[:150]}")
         return get_smart_fallback(target)
 
-    say = result.get("say", "").strip()
+    say = result["say"].strip()
     if not say:
         return get_smart_fallback(target)
+
+    # Tekrar kontrolü
+    say_key = say.lower().replace(" ", "")[:40]
+    for prev in mem.get("last_said", []):
+        if prev.lower().replace(" ", "")[:40] == say_key:
+            print("[DUPE] Tekrar tespit, fallback")
+            return get_smart_fallback(target)
 
     mem["last_said"] = mem.get("last_said", [])
     mem["last_said"].append(say[:50])
@@ -243,9 +276,20 @@ def think():
         print(f"[ERROR]: {e}")
         return jsonify(get_smart_fallback(target))
 
+@app.route("/runner", methods=["POST"])
+def report_runner():
+    data = request.json
+    uid = str(data.get("user_id", ""))
+    player = data.get("player", "")
+    if uid and player:
+        if uid not in runner_memory:
+            runner_memory[uid] = {}
+        runner_memory[uid][player] = runner_memory[uid].get(player, 0) + 1
+        print(f"[RUNNER] {player} ran from {uid}, count: {runner_memory[uid][player]}")
+    return jsonify({"count": runner_memory.get(uid, {}).get(player, 0)})
+
 @app.route("/map", methods=["POST"])
 def update_map():
-    # Bot keşfettikçe harita bilgisi gönderir
     data = request.json
     uid = str(data.get("user_id", ""))
     label = data.get("label", "")
