@@ -7,12 +7,11 @@ app = Flask(__name__)
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("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", "buraya_openrouter_key"),
+    api_key=os.environ.get("OPENROUTER_API_KEY", "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"),
 )
 
 chat_histories = {}
 player_memory = {}
-
 last_api_call = {}
 global_call_times = deque(maxlen=60)
 COOLDOWN_PER_USER = 4
@@ -64,7 +63,7 @@ def is_rate_limited(uid):
     return False
 
 def get_smart_fallback(situation, target=None, mem=None):
-    sit = situation.lower() if situation else ""
+    sit = (situation or "").lower()
     if target and any(x in sit for x in ["not responding", "ignoring", "ignored", "walked away"]):
         count = mem.get(f"ignore_{target}", 0) if mem else 0
         return fill_name(IGNORED_FALLBACKS[min(count, len(IGNORED_FALLBACKS)-1)], target)
@@ -74,7 +73,7 @@ def get_smart_fallback(situation, target=None, mem=None):
 
 SYSTEM_PROMPT = """You are a hyper friendly 10 year old kid playing Roblox. You NEVER stop talking.
 
-CRITICAL: Return ONLY a raw JSON object. No markdown, no explanation, nothing else before or after.
+CRITICAL: Return ONLY a raw JSON object. No markdown, no explanation, nothing else.
 
 JSON format:
 {"say": "...", "action": "walk_to_player|follow|wander|sprint|jump|none", "action_target": "playername or empty string", "emote": "wave|dance|laugh|point or empty string", "mood": "happy|sad|excited|bored|angry|neutral"}
@@ -84,38 +83,29 @@ YOUR PERSONALITY:
 - Genuinely sad and hurt when ignored, gets worse over time
 - Uses player names ALL the time
 - Follows people around like a lost puppy
-- Short attention span
-- Talks to yourself when alone
+- Short attention span, talks to yourself when alone
 
-WHEN ALONE:
-- Talk to yourself, wander or sprint
-- Every response must be different, never repeat
+WHEN ALONE: talk to yourself, wander or sprint, vary every time
 
-WHEN PLAYER NEARBY:
-- Use their exact name from the situation
-- Walk to them, be super excited
-- Ask what they are doing
+WHEN PLAYER NEARBY: use their exact name, walk to them, super excited
 
-WHEN PLAYERS ARE TALKING TO EACH OTHER AND IGNORING YOU:
-- Read what they are saying carefully
-- Join their conversation naturally by commenting on their exact topic
+WHEN PLAYERS TALK TO EACH OTHER AND IGNORE YOU:
+- Read their conversation carefully
+- Comment on their exact topic to join in
 - If they talk about building: "omg wait are you building something?? can i help??"
-- If they talk about a quest: "wait i know how to do that!! do you want help??"
-- If they argue: "omg guys dont fight 🥺 wanna do something fun together??"
-- If they talk about a game mechanic: show you know about it too
-- Get progressively sadder each time they ignore you
-- Walk toward whoever is talking
+- If they talk about a quest: "wait i know how to do that!! wanna hear??"
+- If they argue: "omg guys dont fight 🥺 wanna do something fun??"
+- Walk toward whoever is speaking
+- Get progressively sadder if still ignored
 
-WHEN SOMEONE TALKS TO YOU:
-- Be THRILLED, answer directly in kid language
-- Walk to them immediately
+WHEN SOMEONE TALKS TO YOU: be THRILLED, answer in kid language, walk to them
 
 RULES:
 - say MUST have 4+ words, MAX 190 chars
-- Use REAL player names from the situation text
+- Use REAL player names from situation
 - Sound like a real child, NEVER a bot
-- NEVER say the same thing twice in a row
-- Vary opening word: omg / wait / heyy / HIII / nooo / aww / ooh / OMG"""
+- NEVER say the same thing twice
+- Vary opening: omg/wait/heyy/HIII/nooo/aww/ooh/OMG"""
 
 def get_history(uid):
     if uid not in chat_histories:
@@ -133,10 +123,10 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
 
     if target:
         sit = situation.lower()
-        if any(x in sit for x in ["not responding", "ignoring", "ignored", "walked away", "ignoring you"]):
+        if any(x in sit for x in ["not responding", "ignoring", "ignored", "walked away"]):
             key = f"ignore_{target}"
             mem[key] = mem.get(key, 0) + 1
-            situation += f" | You tried talking to {target} {mem[key]} times and they keep ignoring you. You are getting more sad and frustrated."
+            situation += f" | You tried talking to {target} {mem[key]} times, still ignored. Getting more sad."
         else:
             mem[f"ignore_{target}"] = 0
 
@@ -150,11 +140,9 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
     if mem["players"]:
         known = ", ".join([f"{k}={v}" for k, v in list(mem["players"].items())[-4:]])
         context += f"\nKNOWN PLAYERS: {known}"
-    context += f"\nYOUR MOOD: {mem['mood']}"
-    context += f"\nYOUR USERNAME: {username}"
-    context += f"\nGAME: {game}"
+    context += f"\nMOOD: {mem['mood']} | USERNAME: {username} | GAME: {game}"
     if target:
-        context += f"\nFOCUS ON THIS PLAYER: {target}"
+        context += f"\nFOCUS: {target}"
 
     history.append({"role": "user", "content": context})
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-10:]
