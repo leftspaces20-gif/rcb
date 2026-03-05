@@ -3,7 +3,7 @@ from groq import Groq
 import json
 
 app = Flask(__name__)
-groq_client = Groq(api_key="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")
+groq_client = Groq(api_key="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")
 
 chat_histories = {}
 player_memory = {}
