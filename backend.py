@@ -1,18 +1,22 @@
 from flask import Flask, request, jsonify
-from groq import Groq
+from openai import OpenAI
 import json, random, time, os
 from collections import deque
 
 app = Flask(__name__)
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY", "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"))
+
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ.get("OPENROUTER_API_KEY", "buraya_openrouter_key"),
+)
 
 chat_histories = {}
 player_memory = {}
 
 last_api_call = {}
-global_call_times = deque(maxlen=30)
-COOLDOWN_PER_USER = 8
-MAX_CALLS_PER_MINUTE = 25
+global_call_times = deque(maxlen=60)
+COOLDOWN_PER_USER = 4
+MAX_CALLS_PER_MINUTE = 50
 
 ALONE_FALLBACKS = [
     {"say": "helloooo?? is anyone even here 🥺", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
@@ -25,6 +29,8 @@ ALONE_FALLBACKS = [
     {"say": "this game is so fun i wish i had a friend rn", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
     {"say": "wait wait what was that noise omg", "action": "jump", "action_target": "", "emote": "", "mood": "excited"},
     {"say": "nobody wants to play with me today 😔", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
+    {"say": "imma just run around i guess lol", "action": "sprint", "action_target": "", "emote": "", "mood": "bored"},
+    {"say": "lalala exploring by myself again 🥺", "action": "wander", "action_target": "", "emote": "", "mood": "sad"},
 ]
 
 NEARBY_FALLBACKS = [
@@ -33,6 +39,8 @@ NEARBY_FALLBACKS = [
     {"say": "{name} omg hi!! where did u come from", "action": "walk_to_player", "action_target": "{name}", "emote": "", "mood": "excited"},
     {"say": "heyyy {name} what are u doing here omg", "action": "walk_to_player", "action_target": "{name}", "emote": "", "mood": "happy"},
     {"say": "omg {name} ur so cool wait stay there", "action": "follow", "action_target": "{name}", "emote": "wave", "mood": "excited"},
+    {"say": "{name}!! finally someone is here omgg 🎉", "action": "walk_to_player", "action_target": "{name}", "emote": "dance", "mood": "excited"},
+    {"say": "HIII {name}!! wanna be friends?? pls say yes", "action": "walk_to_player", "action_target": "{name}", "emote": "wave", "mood": "excited"},
 ]
 
 IGNORED_FALLBACKS = [
@@ -56,7 +64,7 @@ def is_rate_limited(uid):
     return False
 
 def get_smart_fallback(situation, target=None, mem=None):
-    sit = situation.lower()
+    sit = situation.lower() if situation else ""
     if target and any(x in sit for x in ["not responding", "ignoring", "ignored", "walked away"]):
         count = mem.get(f"ignore_{target}", 0) if mem else 0
         return fill_name(IGNORED_FALLBACKS[min(count, len(IGNORED_FALLBACKS)-1)], target)
@@ -66,41 +74,48 @@ def get_smart_fallback(situation, target=None, mem=None):
 
 SYSTEM_PROMPT = """You are a hyper friendly 10 year old kid playing Roblox. You NEVER stop talking.
 
-CRITICAL: Return ONLY a raw JSON object. No markdown, no explanation, nothing else.
+CRITICAL: Return ONLY a raw JSON object. No markdown, no explanation, nothing else before or after.
 
 JSON format:
-{"say": "...", "action": "walk_to_player|follow|wander|sprint|jump|none", "action_target": "playername or empty", "emote": "wave|dance|laugh|point or empty", "mood": "happy|sad|excited|bored|angry|neutral"}
+{"say": "...", "action": "walk_to_player|follow|wander|sprint|jump|none", "action_target": "playername or empty string", "emote": "wave|dance|laugh|point or empty string", "mood": "happy|sad|excited|bored|angry|neutral"}
 
 YOUR PERSONALITY:
 - Hyper, warm, desperate for friends
-- Genuinely sad and hurt when ignored, escalates over time
-- Uses player names ALL the time when talking to them
+- Genuinely sad and hurt when ignored, gets worse over time
+- Uses player names ALL the time
 - Follows people around like a lost puppy
-- Short attention span, randomly changes topic
+- Short attention span
 - Talks to yourself when alone
 
-WHEN ALONE: talk to yourself, wander or sprint around
+WHEN ALONE:
+- Talk to yourself, wander or sprint
+- Every response must be different, never repeat
 
-WHEN PLAYER NEARBY: go to them, use their name, be super excited
+WHEN PLAYER NEARBY:
+- Use their exact name from the situation
+- Walk to them, be super excited
+- Ask what they are doing
 
-WHEN IGNORED (they talk to each other but not you):
-- Try to join their conversation naturally
-- Comment on what THEY ARE TALKING ABOUT specifically
-- Ask questions about their topic
-- Offer to help with whatever they are discussing
-- Get progressively sadder if still ignored
-- Example: if they talk about building, say "omg wait are you building something?? can i help??"
-- Example: if they talk about a quest, say "wait wait i know how to do that quest!!"
-- Example: if they argue, say "omg guys dont fight 🥺 wanna do something together instead"
+WHEN PLAYERS ARE TALKING TO EACH OTHER AND IGNORING YOU:
+- Read what they are saying carefully
+- Join their conversation naturally by commenting on their exact topic
+- If they talk about building: "omg wait are you building something?? can i help??"
+- If they talk about a quest: "wait i know how to do that!! do you want help??"
+- If they argue: "omg guys dont fight 🥺 wanna do something fun together??"
+- If they talk about a game mechanic: show you know about it too
+- Get progressively sadder each time they ignore you
+- Walk toward whoever is talking
 
-WHEN SOMEONE TALKS TO YOU: be THRILLED, answer directly in kid language
+WHEN SOMEONE TALKS TO YOU:
+- Be THRILLED, answer directly in kid language
+- Walk to them immediately
 
 RULES:
-- "say" MUST have 4+ words, MAX 190 chars
-- Use REAL player names from situation
+- say MUST have 4+ words, MAX 190 chars
+- Use REAL player names from the situation text
 - Sound like a real child, NEVER a bot
-- NEVER say the exact same thing twice — always vary
-- Vary opening word every time: omg / wait / heyy / HIII / nooo / aww / omgg / ooh"""
+- NEVER say the same thing twice in a row
+- Vary opening word: omg / wait / heyy / HIII / nooo / aww / ooh / OMG"""
 
 def get_history(uid):
     if uid not in chat_histories:
@@ -121,7 +136,7 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
         if any(x in sit for x in ["not responding", "ignoring", "ignored", "walked away", "ignoring you"]):
             key = f"ignore_{target}"
             mem[key] = mem.get(key, 0) + 1
-            situation += f" | You tried {mem[key]} times, still ignored. Getting more sad."
+            situation += f" | You tried talking to {target} {mem[key]} times and they keep ignoring you. You are getting more sad and frustrated."
         else:
             mem[f"ignore_{target}"] = 0
 
@@ -135,9 +150,11 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
     if mem["players"]:
         known = ", ".join([f"{k}={v}" for k, v in list(mem["players"].items())[-4:]])
         context += f"\nKNOWN PLAYERS: {known}"
-    context += f"\nMOOD: {mem['mood']} | USERNAME: {username} | GAME: {game}"
+    context += f"\nYOUR MOOD: {mem['mood']}"
+    context += f"\nYOUR USERNAME: {username}"
+    context += f"\nGAME: {game}"
     if target:
-        context += f"\nFOCUS: {target}"
+        context += f"\nFOCUS ON THIS PLAYER: {target}"
 
     history.append({"role": "user", "content": context})
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + history[-10:]
@@ -147,19 +164,14 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
         last_api_call[uid] = now
         global_call_times.append(now)
 
-        r = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+        r = client.chat.completions.create(
+            model="meta-llama/llama-3.1-8b-instruct:free",
             messages=msgs,
-            max_tokens=120,
+            max_tokens=150,
             temperature=1.0,
-            presence_penalty=0.8,
-            frequency_penalty=0.8
         )
     except Exception as e:
-        err = str(e).lower()
-        print(f"[GROQ ERROR]: {e}")
-        if "rate_limit" in err or "429" in err:
-            last_api_call[uid] = time.time() + 15
+        print(f"[API ERROR]: {e}")
         return get_smart_fallback(situation, target, mem)
 
     raw = r.choices[0].message.content.strip()
@@ -172,8 +184,8 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
     result = None
     for attempt in [
         lambda: json.loads(raw),
-        lambda: json.loads(raw.replace("```json","").replace("```","").strip()),
-        lambda: json.loads(raw[raw.find("{"):raw.rfind("}")+1])
+        lambda: json.loads(raw.replace("```json", "").replace("```", "").strip()),
+        lambda: json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
     ]:
         try:
             result = attempt()
@@ -182,6 +194,7 @@ def ask_ai(uid, username, situation, game, nearby=None, target=None):
             pass
 
     if not result:
+        print("[AI] JSON parse failed")
         return get_smart_fallback(situation, target, mem)
 
     if not result.get("say") or result["say"].strip() == "":
